@@ -6,13 +6,19 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from typing import Optional, Any
 from .ai_engine import MedicalContext
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 
-def get_calendar_service():
-    """Shows basic usage of the Google Calendar API."""
+def get_calendar_service() -> Optional[Any]:
+    """
+    Initializes and returns the Google Calendar API v3 service.
+    
+    This function handles both traditional OAuth Desktop Client IDs
+    (via InstalledAppFlow) and Service Account credentials.
+    """
     creds = None
     # Check for token from environment first (for Cloud Run/Headless)
     token_json_base64 = os.environ.get("GOOGLE_TOKEN_JSON_BASE64")

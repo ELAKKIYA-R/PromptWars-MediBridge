@@ -1,8 +1,11 @@
 import os
 import google.genai as genai
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Any
 import json
+import logging
+
+logger = logging.getLogger('medibridge_app.ai_engine')
 
 class Medication(BaseModel):
     name: str = Field(description="Name of the medication")
@@ -14,10 +17,17 @@ class MedicalContext(BaseModel):
     medications: List[Medication] = Field(description="List of medications prescribed")
     critical_alerts: List[str] = Field(description="Critical Alerts like Allergies or Warnings")
 
-def extract_medical_info(image) -> Optional[MedicalContext]:
+def extract_medical_info(image: Any) -> Optional[MedicalContext]:
     """
-    Extracts medical information from an image using Gemini 3 Flash Preview.
+    Extracts medical information from a PIL Image using Gemini 3 Flash Preview.
     Uses the modern google-genai SDK.
+    
+    Args:
+        image: PIL Image object containing the medical document.
+        
+    Returns:
+        Optional[MedicalContext]: A validated Pydantic model containing the extracted data, 
+                                 or None if extraction fails.
     """
     try:
         # Efficiency improvement: Resize image
@@ -34,6 +44,7 @@ def extract_medical_info(image) -> Optional[MedicalContext]:
         """
         
         try:
+            logger.info("Attempting extraction with primary model: gemini-3-flash-preview")
             response = client.models.generate_content(
                 model='gemini-3-flash-preview',
                 contents=[prompt, img],
@@ -44,7 +55,7 @@ def extract_medical_info(image) -> Optional[MedicalContext]:
             )
             return response.parsed
         except Exception as e:
-            print(f"DEBUG: Primary model (gemini-3-flash-preview) failed: {e}. Falling back to gemini-2.5-flash...")
+            logger.warning(f"Primary model (gemini-3-flash-preview) failed: {e}. Falling back to gemini-2.5-flash...")
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
                 contents=[prompt, img],
@@ -56,6 +67,5 @@ def extract_medical_info(image) -> Optional[MedicalContext]:
             return response.parsed
         
     except Exception as e:
-        import datetime
-        print(f"DEBUG: Error extracting medical info at {datetime.datetime.now()}: {e}")
+        logger.error(f"Error extracting medical info: {e}", exc_info=True)
         return None
