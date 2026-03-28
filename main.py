@@ -146,13 +146,23 @@ if "user_creds" not in st.session_state:
         
         # Check if this is the callback redirect from Google Auth
         if "code" in st.query_params:
-            auth_code = st.query_params["code"]
-            flow = get_oauth_flow(REDIRECT_URI)
+            auth_code = st.query_params.get("code")
             
+            # If we already authenticated successfully BEFORE a rerun, just pass
+            if "google_auth_success" in st.session_state:
+                st.success("✅ Secure Handshake Verified.")
+                st.markdown(f'<a href="{REDIRECT_URI}" target="_self"><button style="padding:10px 20px;border-radius:10px;background:#38bdf8;color:white;border:none;cursor:pointer;font-weight:bold;">Initialize Workspace</button></a>', unsafe_allow_html=True)
+                st.stop()
+                
+            flow = get_oauth_flow(REDIRECT_URI)
             if flow:
                 with st.spinner("Authenticating Securely..."):
                     try:
-                        full_url = f"{REDIRECT_URI}?code={auth_code}"
+                        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+                        from urllib.parse import urlencode
+                        qs = urlencode(st.query_params.to_dict())
+                        full_url = f"{REDIRECT_URI}?{qs}"
+                        
                         flow.fetch_token(authorization_response=full_url)
                         credentials = flow.credentials
                         
@@ -164,12 +174,18 @@ if "user_creds" not in st.session_state:
                             "client_secret": credentials.client_secret,
                             "scopes": credentials.scopes
                         }
-                        st.success("Successfully Authenticated! Enter the platform...")
-                        st.query_params.clear()
-                        st.rerun()
+                        st.session_state["google_auth_success"] = True
+                        
+                        st.success("✅ Secure Handshake Verified.")
+                        st.info("The secure connection to Google was successful. Click the button below to initialize the Care Plan Workspace.")
+                        st.markdown(f'<a href="{REDIRECT_URI}" target="_self"><button style="padding:10px 20px;border-radius:10px;background:#38bdf8;color:white;border:none;cursor:pointer;font-weight:bold;">Initialize Workspace</button></a>', unsafe_allow_html=True)
+                        
                     except Exception as e:
-                        st.error(f"Failed to fetch token: {e}")
+                        st.error(f"Authentication Session Expired or Invalid Link")
+                        st.warning(f"Google login codes are one-time use and expire quickly. Please clear your session and log in again. (Error trace: {str(e)})")
                         logger.error(f"Token exchange failed: {e}")
+                        st.markdown(f'<a href="{REDIRECT_URI}" target="_self"><button style="padding:10px 20px;border-radius:10px;background:#ef4444;color:white;border:none;cursor:pointer;font-weight:bold;">Start Fresh Login</button></a>', unsafe_allow_html=True)
+            st.stop()
         else:
             flow = get_oauth_flow(REDIRECT_URI)
             if flow:
