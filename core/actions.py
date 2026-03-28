@@ -1,93 +1,76 @@
 import datetime
 import os.path
+import base64
+import tempfile
+import json
+import logging
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from typing import Optional, Any
 from .ai_engine import MedicalContext
 
-# If modifying these scopes, delete the file token.json.
-SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
+logger = logging.getLogger('medibridge_app.actions')
 
-def get_calendar_service() -> Optional[Any]:
+# If modifying these scopes, delete the file token.json.
+SCOPES = ["https://www.googleapis.com/auth/calendar.events", "openid", "https://www.googleapis.com/auth/userinfo.email"]
+
+def get_oauth_flow(redirect_uri: str) -> Optional[Flow]:
     """
-    Initializes and returns the Google Calendar API v3 service.
+    Constructs a Google OAuth Flow object from credentials.json
+    (or via GOOGLE_CREDENTIALS_JSON_BASE64 env var).
+    """
+    creds_path = "credentials.json"
+    temp_path = None
     
-    This function handles both traditional OAuth Desktop Client IDs
-    (via InstalledAppFlow) and Service Account credentials.
+    if not os.path.exists(creds_path):
+        creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON_BASE64")
+        if creds_json:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tf:
+                tf.write(base64.b64decode(creds_json).decode("utf-8"))
+                temp_path = tf.name
+            creds_path = temp_path
+        else:
+            logger.error("credentials.json not found and GOOGLE_CREDENTIALS_JSON_BASE64 not set.")
+            return None
+            
+    try:
+        flow = Flow.from_client_secrets_file(
+            creds_path,
+            scopes=SCOPES,
+            redirect_uri=redirect_uri
+        )
+        if temp_path:
+            os.remove(temp_path)
+        return flow
+    except Exception as e:
+        logger.error(f"Failed to build OAuth Flow: {e}")
+        if temp_path:
+            os.remove(temp_path)
+        return None
+
+def get_calendar_service(creds_dict: dict) -> Optional[Any]:
     """
-    creds = None
-    # Check for token from environment first (for Cloud Run/Headless)
-    token_json_base64 = os.environ.get("GOOGLE_TOKEN_JSON_BASE64")
-    if token_json_base64:
-        import base64
-        import json
-        token_data = json.loads(base64.b64decode(token_json_base64).decode("utf-8"))
-        creds = Credentials.from_authorized_user_info(token_data, SCOPES)
-    elif os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    # If there are no (valid) credentials available, let the user log in.
-    if not creds or not creds.valid:
+    Initializes and returns the Google Calendar API v3 service using Streamlit session credentials.
+    """
+    if not creds_dict:
+        return None
+        
+    try:
+        creds = Credentials(**creds_dict)
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
-        else:
-            import base64
-            import tempfile
-            import json
-            from google.oauth2 import service_account
             
-            creds_path = "credentials.json"
-            temp_path = None
-            
-            if not os.path.exists(creds_path):
-                creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON_BASE64")
-                if creds_json:
-                    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tf:
-                        tf.write(base64.b64decode(creds_json).decode("utf-8"))
-                        temp_path = tf.name
-                    creds_path = temp_path
-                else:
-                    print("credentials.json not found and GOOGLE_CREDENTIALS_JSON_BASE64 not set.")
-                    return None
-            
-            # Check if it's a Service Account or OAuth
-            try:
-                with open(creds_path, "r") as f:
-                    creds_data = json.load(f)
-                    
-                if "type" in creds_data and creds_data["type"] == "service_account":
-                    creds = service_account.Credentials.from_service_account_file(creds_path, scopes=SCOPES)
-                    if temp_path:
-                        os.remove(temp_path)
-                    try:
-                        return build("calendar", "v3", credentials=creds)
-                    except HttpError as error:
-                        print(f"An error occurred with Service Account builder: {error}")
-                        return None
-                else:
-                    flow = InstalledAppFlow.from_client_secrets_file(creds_path, SCOPES)
-                    creds = flow.run_local_server(port=0)
-                    if temp_path:
-                        os.remove(temp_path)
-                    
-                    # Save the credentials for the next run
-                    with open("token.json", "w") as token:
-                        token.write(creds.to_json())
-            except Exception as e:
-                import traceback
-                print(f"DEBUG: Failed processing credentials.json: {e}")
-                if temp_path:
-                    os.remove(temp_path)
-                return None
-
-    try:
         service = build("calendar", "v3", credentials=creds)
         return service
     except HttpError as error:
-        print(f"An error occurred: {error}")
+        logger.error(f"An error occurred building calendar service: {error}")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to authenticate calendar service: {e}")
         return None
 
 def calculate_recurrence(frequency: str) -> str:
@@ -101,10 +84,11 @@ def calculate_recurrence(frequency: str) -> str:
         return 'RRULE:FREQ=DAILY;COUNT=14' # Simplifying bid
     return 'RRULE:FREQ=DAILY;COUNT=7' # Default 7 days
 
-def sync_to_calendar(medical_context: MedicalContext) -> bool:
+def sync_to_calendar(medical_context: MedicalContext, creds_dict: dict) -> bool:
     """Syncs the extracted medical context to Google Calendar as events."""
-    service = get_calendar_service()
+    service = get_calendar_service(creds_dict)
     if not service:
+        logger.error("No valid calendar service available for sync.")
         return False
         
     try:
@@ -137,9 +121,9 @@ def sync_to_calendar(medical_context: MedicalContext) -> bool:
             }
 
             event = service.events().insert(calendarId='primary', body=event).execute()
-            print(f"Event created: {event.get('htmlLink')}")
+            logger.info(f"Event created: {event.get('htmlLink')}")
             
         return True
     except Exception as e:
-        print(f"Failed to create events: {e}")
+        logger.error(f"Failed to create events: {e}")
         return False

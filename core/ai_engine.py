@@ -17,23 +17,35 @@ class MedicalContext(BaseModel):
     medications: List[Medication] = Field(description="List of medications prescribed")
     critical_alerts: List[str] = Field(description="Critical Alerts like Allergies or Warnings")
 
-def extract_medical_info(image: Any) -> Optional[MedicalContext]:
+def extract_medical_info(file_obj: Any, filename: str) -> Optional[MedicalContext]:
     """
-    Extracts medical information from a PIL Image using Gemini 3 Flash Preview.
+    Extracts medical information from a document (Image or PDF) using Gemini 3 Flash Preview.
     Uses the modern google-genai SDK.
     
     Args:
-        image: PIL Image object containing the medical document.
+        file_obj: The Streamlit UploadedFile object containing the medical document.
+        filename: Name of the file to determine extension/mime type.
         
     Returns:
         Optional[MedicalContext]: A validated Pydantic model containing the extracted data, 
                                  or None if extraction fails.
     """
     try:
-        # Efficiency improvement: Resize image
-        img = image.copy()
-        img.thumbnail((1024, 1024))
+        from google.genai import types
         
+        is_pdf = filename.lower().endswith('.pdf')
+        
+        if is_pdf:
+            # Native PDF Part Creation
+            document = types.Part.from_bytes(data=file_obj.getvalue(), mime_type="application/pdf")
+            ai_content = document
+        else:
+            # Efficiency improvement: Resize image
+            from PIL import Image
+            img = Image.open(file_obj).copy()
+            img.thumbnail((1024, 1024))
+            ai_content = img
+            
         client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
         
         prompt = """
