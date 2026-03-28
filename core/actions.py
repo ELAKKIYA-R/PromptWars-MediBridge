@@ -14,22 +14,37 @@ SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 def get_calendar_service():
     """Shows basic usage of the Google Calendar API."""
     creds = None
-    # The file token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first
-    # time.
-    if os.path.exists("token.json"):
+    # Check for token from environment first (for Cloud Run/Headless)
+    token_json_base64 = os.environ.get("GOOGLE_TOKEN_JSON_BASE64")
+    if token_json_base64:
+        import base64
+        import json
+        token_data = json.loads(base64.b64decode(token_json_base64).decode("utf-8"))
+        creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+    elif os.path.exists("token.json"):
         creds = Credentials.from_authorized_user_file("token.json", SCOPES)
     # If there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            if not os.path.exists("credentials.json"):
-                print("credentials.json not found. Please set up calendar API.")
-                return None
-            flow = InstalledAppFlow.from_client_secrets_file(
-                "credentials.json", SCOPES
-            )
+            import base64
+            import tempfile
+            
+            if os.path.exists("credentials.json"):
+                flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+            else:
+                creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON_BASE64")
+                if creds_json:
+                    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tf:
+                        tf.write(base64.b64decode(creds_json).decode("utf-8"))
+                        temp_path = tf.name
+                    flow = InstalledAppFlow.from_client_secrets_file(temp_path, SCOPES)
+                    # Note: remove temp_path after use if needed, but InstalledAppFlow might need it during flow
+                else:
+                    print("credentials.json not found and GOOGLE_CREDENTIALS_JSON_BASE64 not set.")
+                    return None
+            
             creds = flow.run_local_server(port=0)
         # Save the credentials for the next run
         with open("token.json", "w") as token:
