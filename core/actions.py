@@ -30,25 +30,52 @@ def get_calendar_service():
         else:
             import base64
             import tempfile
+            import json
+            from google.oauth2 import service_account
             
-            if os.path.exists("credentials.json"):
-                flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-            else:
+            creds_path = "credentials.json"
+            temp_path = None
+            
+            if not os.path.exists(creds_path):
                 creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON_BASE64")
                 if creds_json:
                     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tf:
                         tf.write(base64.b64decode(creds_json).decode("utf-8"))
                         temp_path = tf.name
-                    flow = InstalledAppFlow.from_client_secrets_file(temp_path, SCOPES)
-                    # Note: remove temp_path after use if needed, but InstalledAppFlow might need it during flow
+                    creds_path = temp_path
                 else:
                     print("credentials.json not found and GOOGLE_CREDENTIALS_JSON_BASE64 not set.")
                     return None
             
-            creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
-        with open("token.json", "w") as token:
-            token.write(creds.to_json())
+            # Check if it's a Service Account or OAuth
+            try:
+                with open(creds_path, "r") as f:
+                    creds_data = json.load(f)
+                    
+                if "type" in creds_data and creds_data["type"] == "service_account":
+                    creds = service_account.Credentials.from_service_account_file(creds_path, scopes=SCOPES)
+                    if temp_path:
+                        os.remove(temp_path)
+                    try:
+                        return build("calendar", "v3", credentials=creds)
+                    except HttpError as error:
+                        print(f"An error occurred with Service Account builder: {error}")
+                        return None
+                else:
+                    flow = InstalledAppFlow.from_client_secrets_file(creds_path, SCOPES)
+                    creds = flow.run_local_server(port=0)
+                    if temp_path:
+                        os.remove(temp_path)
+                    
+                    # Save the credentials for the next run
+                    with open("token.json", "w") as token:
+                        token.write(creds.to_json())
+            except Exception as e:
+                import traceback
+                print(f"DEBUG: Failed processing credentials.json: {e}")
+                if temp_path:
+                    os.remove(temp_path)
+                return None
 
     try:
         service = build("calendar", "v3", credentials=creds)

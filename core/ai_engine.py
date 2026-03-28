@@ -1,10 +1,8 @@
 import os
-import google.generativeai as genai
+import google.genai as genai
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import json
-
-genai.configure(api_key=os.environ.get("GEMINI_API_KEY", ""))
 
 class Medication(BaseModel):
     name: str = Field(description="Name of the medication")
@@ -18,42 +16,46 @@ class MedicalContext(BaseModel):
 
 def extract_medical_info(image) -> Optional[MedicalContext]:
     """
-    Extracts medical information from an image using Gemini 1.5 Flash.
-    Returns a structured MedicalContext object or None if extraction fails.
+    Extracts medical information from an image using Gemini 3 Flash Preview.
+    Uses the modern google-genai SDK.
     """
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # Efficiency improvement: Resize image
+        img = image.copy()
+        img.thumbnail((1024, 1024))
+        
+        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY", ""))
         
         prompt = """
         Analyze this medical prescription or lab report.
-        Extract the Patient Name, Medications (including Dosage and Frequency), and Critical Alerts (Allergies/Warnings).
+        Extract the Patient Name, Medications (including Dosage and Frequency), and Critical Alerts (Allergies/Warnings/Contraindications).
+        Pay special attention to contraindications (e.g., "Warning: This patient is allergic to Penicillin, and this prescription contains Amoxicillin").
         If the image is too blurry to read with high confidence, return an empty medications list and add "Image too blurry" to critical alerts.
-        Return the result strictly as a JSON object matching this schema without any extra text or markdown formatting:
-        {
-            "patient_name": "string",
-            "medications": [
-                {
-                    "name": "string",
-                    "dosage": "string",
-                    "frequency": "string"
-                }
-            ],
-            "critical_alerts": ["string"]
-        }
         """
         
-        response = model.generate_content([prompt, image])
-        
-        # Parse output as JSON
-        text = response.text.strip()
-        if text.startswith("```json"):
-            text = text[7:-3].strip()
-        elif text.startswith("```"):
-            text = text[3:-3].strip()
-            
-        data = json.loads(text)
-        return MedicalContext(**data)
+        try:
+            response = client.models.generate_content(
+                model='gemini-3-flash-preview',
+                contents=[prompt, img],
+                config={
+                    'response_mime_type': 'application/json',
+                    'response_schema': MedicalContext,
+                }
+            )
+            return response.parsed
+        except Exception as e:
+            print(f"DEBUG: Primary model (gemini-3-flash-preview) failed: {e}. Falling back to gemini-2.5-flash...")
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=[prompt, img],
+                config={
+                    'response_mime_type': 'application/json',
+                    'response_schema': MedicalContext,
+                }
+            )
+            return response.parsed
         
     except Exception as e:
-        print(f"Error extracting info: {e}")
+        import datetime
+        print(f"DEBUG: Error extracting medical info at {datetime.datetime.now()}: {e}")
         return None

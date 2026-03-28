@@ -5,11 +5,12 @@ MediBridge is a Streamlit application designed to process uploaded images of med
 The app extracts key information, structured logically, and seamlessly integrates with the Google Calendar API to sync medication schedules to a Care Plan.
 
 ## Features
-- **AI Extraction**: Upload prescription images and extract Patient Name, Medications (with Dosage and Frequency), and Critical Alerts.
-- **Structured Data**: Leverages Pydantic for rigid LLM output parsing (JSON schema).
-- **Care Plan Sync**: Automatically creates recurring events in Google Calendar for medications.
+- **AI Extraction**: Upload prescription images and extract Patient Name, Medications (with Dosage and Frequency), and Critical Alerts, explicitly looking for contraindications.
+- **Structured Data**: Leverages Pydantic and native Gemini response schemas for rigid LLM output parsing (JSON schema).
+- **Care Plan Sync**: Includes a logic gate to review accuracy before automatically creating recurring events in Google Calendar for medications.
 - **Clean Architecture**: Separates UI (Streamlit) from AI Logic (Gemini) and Actions (Google Services).
-- **Error Handling**: Basic handling for blurred images or failed extraction.
+- **Security**: All API keys are managed via environment variables. User data is processed in-memory and not persisted to disk to ensure HIPAA-aligned privacy standards.
+- **Infrastructure**: Uses GCP's global infrastructure and Cloud Logging approaches to provide low-latency inference and broad adoption support.
 
 ## Setup instructions
 
